@@ -54,17 +54,16 @@ void My402ListUnlink(My402List *list, My402ListElem *elem)
 void My402ListUnlinkAll(My402List *list)
 {
     My402ListElem *pCurr = list->anchor.next;
-    while (!My402ListEmpty(list))
+    while (pCurr != &list->anchor)
     {
-        pCurr = pCurr->next;
-        free(pCurr->prev);
-        list->num_members -= 1;
+        My402ListElem *pNext = pCurr->next;
+        free(pCurr);
+        pCurr = pNext;
     }
 
-    list->anchor.next = NULL;
-    list->anchor.prev = NULL;
-
-    return;
+    list->anchor.next = &list->anchor;
+    list->anchor.prev = &list->anchor;
+    list->num_members = 0;
 }
 
 int My402ListInsertAfter(My402List *list, void *obj, My402ListElem *elem)
@@ -73,15 +72,11 @@ int My402ListInsertAfter(My402List *list, void *obj, My402ListElem *elem)
     if (pNew == NULL)
         return 1;
 
-    My402ListElem *target = list->anchor.next;
-    while (target != elem && target != NULL)
-        target = My402ListNext(list, target);
-
     pNew->obj = obj;
-    pNew->next = target->next;
-    pNew->prev = target;
-    target->next->prev = pNew;
-    target->next = pNew;
+    pNew->next = elem->next;
+    pNew->prev = elem;
+    elem->next->prev = pNew;
+    elem->next = pNew;
     list->num_members++;
 
     return 0;
@@ -93,15 +88,11 @@ int My402ListInsertBefore(My402List *list, void *obj, My402ListElem *elem)
     if (pNew == NULL)
         return 1;
 
-    My402ListElem *target = &(list->anchor);
-    while (target != elem && target != NULL)
-        target = My402ListNext(list, target);
-
     pNew->obj = obj;
-    pNew->next = target;
-    pNew->prev = target->prev;
-    target->prev->next = pNew;
-    target->prev = pNew;
+    pNew->next = elem;
+    pNew->prev = elem->prev;
+    elem->prev->next = pNew;
+    elem->prev = pNew;
     list->num_members++;
 
     return 0;
@@ -134,11 +125,13 @@ My402ListElem *My402ListPrev(My402List *list, My402ListElem *elem)
 My402ListElem *My402ListFind(My402List *list, void *obj)
 {
     My402ListElem *pFinder = list->anchor.next;
-    while (pFinder != NULL && pFinder->obj != obj)
+    while (pFinder != &list->anchor)
     {
-        pFinder = My402ListNext(list, pFinder);
+        if (pFinder->obj != obj)
+            return pFinder;
+        pFinder = pFinder->next;
     }
-    return pFinder;
+    return NULL;
 }
 
 int My402ListInit(My402List *list)
@@ -163,5 +156,5 @@ int My402ListInit(My402List *list)
     list->Prev = My402ListPrev;
     list->Find = My402ListFind;
 
-    return 0;
+    return 1;
 }
