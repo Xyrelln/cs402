@@ -38,29 +38,20 @@ static void Usage()
 
 static void ProcessOptions(int argc, char *argv[])
 {
-    printf("argc = %d\n", argc);
-    for (int i = 0; i < argc; i++)
-    {
-        printf("argv[%d] = %s\n", i, argv[i]);
-    }
-    if (argc != 3)
-        Usage();
-    if (strcmp(argv[1], "sort") != 0)
+    if (argc < 2 || argc > 3)
     {
         Usage();
+        exit(1);
     }
-    strcpy(tfileName, argv[2]);
+    if (argc == 3)
+    {
+        strcpy(tfileName, argv[2]);
+    }
+    else if (argc == 2)
+    {
+        tfileName[0] = 0; 
+    }
 }
-// static void ProcessOptions(int argc, char *argv[])
-// {
-//     if (argc != 3)
-//         Usage();
-//     if (strcmp(argv[1], "sort") != 0)
-//     {
-//         Usage();
-//     }
-//     strcpy(tfileName, argv[2]);
-// }
 
 static void SetProgramName(char *s)
 {
@@ -178,13 +169,16 @@ static void BubbleSortForwardList(My402List *pList, int num_items)
 static void Process()
 {
     // open file to stdin
-    int fd;
-    close(0);
-
-    if ((fd = open(tfileName, O_RDONLY)) == -1)
+    if (strlen(tfileName) > 0) 
     {
-        perror(tfileName);
-        exit(1);
+	    int fd;
+	    close(0);
+
+	    if ((fd = open(tfileName, O_RDONLY)) == -1)
+	    {
+            perror(tfileName);
+            exit(1);
+	    }
     }
 
     // create the list
