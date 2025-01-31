@@ -38,18 +38,18 @@ static void Usage()
 
 static void ProcessOptions(int argc, char *argv[])
 {
-    if (argc < 2 || argc > 3)
-    {
-        Usage();
-        exit(1);
-    }
-    if (argc == 3)
+    if (argc == 3 && strcmp(argv[1], "sort") == 0)
     {
         strcpy(tfileName, argv[2]);
     }
-    else if (argc == 2)
+    else if (argc == 2 && strcmp(argv[1], "sort") == 0)
     {
         tfileName[0] = 0;
+    }
+    else
+    {
+        Usage();
+        exit(1);
     }
 }
 
@@ -67,9 +67,9 @@ static void SetProgramName(char *s)
     }
 }
 
-static void writeTableHeader(int fd)
+static void printTableHeader()
 {
-    char row_data[82] = {0};
+    char row_data[81] = {0};
     row_data[0] = '+';
     int index = 1;
     for (int i = 0; i < sizeof(rowLength) / sizeof(int); i++)
@@ -80,13 +80,7 @@ static void writeTableHeader(int fd)
         }
         row_data[index++] = '+';
     }
-    row_data[80] = '\n';
-    ssize_t bytes_written = write(fd, row_data, 81);
-    if (bytes_written != 81)
-    {
-        perror("writing table structure row failed");
-        exit(1);
-    }
+    printf("%s\n", row_data);
 }
 
 /* ----------------------- Program Functions ------------------------ */
@@ -349,9 +343,9 @@ static void Process()
     BubbleSortForwardList(&transactions, tfileLineNumber);
 
     // write to file
-    writeTableHeader(1);
+    printTableHeader();
     printf("|       Date      | Description              |         Amount |        Balance |\n");
-    writeTableHeader(1);
+    printTableHeader();
 
     // print out the table
     int balance = 0;
@@ -431,14 +425,14 @@ static void Process()
 
                 formatted[j] = '\0';
 
-                printf("| %c %8s.%02d %c|\n", balance >= 0 ? ' ' : '(', formatted, abs(balance % 100), balance >= 0 ? ' ' : ')');
+                printf("| %c %8s.%02d%c |\n", balance >= 0 ? ' ' : '(', formatted, abs(balance % 100), balance >= 0 ? ' ' : ')');
                 break;
             }
         }
 
         curr = transactions.Next(&transactions, curr);
     }
-    writeTableHeader(1);
+    printTableHeader();
 }
 
 /* ----------------------- main() ----------------------- */
