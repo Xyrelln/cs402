@@ -49,7 +49,7 @@ static void ProcessOptions(int argc, char *argv[])
     }
     else if (argc == 2)
     {
-        tfileName[0] = 0; 
+        tfileName[0] = 0;
     }
 }
 
@@ -169,16 +169,16 @@ static void BubbleSortForwardList(My402List *pList, int num_items)
 static void Process()
 {
     // open file to stdin
-    if (strlen(tfileName) > 0) 
+    if (strlen(tfileName) > 0)
     {
-	    int fd;
-	    close(0);
+        int fd;
+        close(0);
 
-	    if ((fd = open(tfileName, O_RDONLY)) == -1)
-	    {
+        if ((fd = open(tfileName, O_RDONLY)) == -1)
+        {
             perror(tfileName);
             exit(1);
-	    }
+        }
     }
 
     // create the list
@@ -416,7 +416,7 @@ static void Process()
                     break;
                 }
                 char buffer[20];
-                snprintf(buffer, sizeof(buffer), "%d", balance_dollar);
+                snprintf(buffer, sizeof(buffer), "%d", abs(balance_dollar));
 
                 char formatted[25];
                 int j = 0, mod = strlen(buffer) % 3;
@@ -431,7 +431,7 @@ static void Process()
 
                 formatted[j] = '\0';
 
-                printf("| %c %8s.%02d %c|\n", balance >= 0 ? ' ' : '(', formatted, balance % 100, balance >= 0 ? ' ' : ')');
+                printf("| %c %8s.%02d %c|\n", balance >= 0 ? ' ' : '(', formatted, abs(balance % 100), balance >= 0 ? ' ' : ')');
                 break;
             }
         }
