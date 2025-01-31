@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <time.h>
+#include <ctype.h>
 
 #include "cs402.h"
 
@@ -23,7 +24,7 @@
 #define MAX_DESCRIPTION_LENGTH 24
 
 static char gszProgName[MAXPATHLENGTH];
-static char tfileName[MAXPATHLENGTH];
+static char tfileName[MAXPATHLENGTH] = {0};
 static const int rowLength[] = {17, 26, 16, 16};
 
 /* ----------------------- Utility Functions ----------------------- */
@@ -36,15 +37,79 @@ static void Usage()
     exit(-1);
 }
 
-static void ProcessOptions(int argc, char *argv[])
+static int isValidFileName(const char *filename)
 {
-    if (argc == 3 && strcmp(argv[1], "sort") == 0)
+    int p = 0;
+    while (filename[p++] != 0)
+        ;
+    while (p > 0)
     {
-        strcpy(tfileName, argv[2]);
+        if (filename[p] != '/')
+            p--;
+        else
+            break;
     }
-    else if (argc == 2 && strcmp(argv[1], "sort") == 0)
+    if (filename[p] == '/')
+        p++;
+    if (filename[p] == 'f')
     {
-        tfileName[0] = 0;
+        p++;
+        for (int i = p; filename[i] != 0; i++)
+        {
+            if (!isdigit(filename[i]))
+            {
+                return 0;
+            }
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static void ProcessOptions(int argc, char *argv[], int *fd)
+{
+    if (argc > 1)
+    {
+        if (strcmp(argv[1], "sort") != 0)
+        {
+            fprintf(stderr, "malformed command, \"%s\" is not a valid commandline option\n", argv[1]);
+            Usage();
+        }
+
+        if (argc == 3)
+        {
+            strcpy(tfileName, argv[2]);
+
+            if (isValidFileName(tfileName) == 0)
+            {
+                fprintf(stderr, "input file \"%s\" is in the wrong format\n", tfileName);
+                exit(1);
+            }
+            if (access(tfileName, F_OK) == -1)
+            {
+                fprintf(stderr, "input file \"%s\" does not exist\n", tfileName);
+                exit(1);
+            }
+
+            if (access(tfileName, R_OK) == -1)
+            {
+                fprintf(stderr, "input file \"%s\" cannot be opened - access denied\n", tfileName);
+                exit(1);
+            }
+
+            struct stat file_stat;
+            if (stat(tfileName, &file_stat) == 0 && S_ISDIR(file_stat.st_mode))
+            {
+                fprintf(stderr, "input file \"%s\" is a directory or input file is not in the right format\n", tfileName);
+                exit(1);
+            }
+            close(0);
+            if ((*fd = open(tfileName, O_RDONLY)) == -1)
+            {
+                perror(tfileName);
+                exit(1);
+            }
+        }
     }
     else
     {
@@ -134,7 +199,7 @@ static void BubbleSortForwardList(My402List *pList, int num_items)
 
     if (My402ListLength(pList) != num_items)
     {
-        fprintf(stderr, "List length is not %1d in BubbleSortForwardList().\n", num_items);
+        fprintf(stderr, "error: list length is not %1d in BubbleSortForwardList()\n", num_items);
         exit(1);
     }
     for (i = 0; i < num_items; i++)
@@ -160,19 +225,11 @@ static void BubbleSortForwardList(My402List *pList, int num_items)
     }
 }
 
-static void Process()
+static void Process(int fd)
 {
     // open file to stdin
     if (strlen(tfileName) > 0)
     {
-        int fd;
-        close(0);
-
-        if ((fd = open(tfileName, O_RDONLY)) == -1)
-        {
-            perror(tfileName);
-            exit(1);
-        }
     }
 
     // create the list
@@ -180,19 +237,19 @@ static void Process()
     memset(&transactions, 0, sizeof(My402List));
     if (My402ListInit(&transactions) != 1)
     {
-        perror("error creating My402List");
+        perror("error: error creating My402List\n");
         exit(1);
     }
 
     // read file line by line
-    char buffer[BUFFER_SIZE];
+    char buffer[BUFFER_SIZE] = {0};
     int tfileLineNumber = 0;
     while (fgets(buffer, BUFFER_SIZE, stdin) != NULL)
     {
         // line too long
         if (strlen(buffer) > MAX_VALID_LINE_CHAR)
         {
-            fprintf(stderr, "line %d has more than %d chars", tfileLineNumber, MAX_VALID_LINE_CHAR);
+            fprintf(stderr, "error: line %d has more than %d chars\n", tfileLineNumber, MAX_VALID_LINE_CHAR);
             exit(1);
         }
 
@@ -200,9 +257,10 @@ static void Process()
         TransactionNode *node = (TransactionNode *)malloc(sizeof(TransactionNode));
         if (node == NULL)
         {
-            perror("failed to malloc space for new transaction node");
+            perror("error: failed to malloc space for new transaction node\n");
             exit(1);
         }
+        node->isDeposit = -1;
 
         // read single line char by char
         int section = 0;
@@ -218,13 +276,18 @@ static void Process()
             {
                 if (buffer[i] == '\t')
                 {
+                    if (node->isDeposit == -1)
+                    {
+                        fprintf(stderr, "error: deposit sign not found on line %d: %d\n", tfileLineNumber, (int)buffer[i + 1]);
+                        exit(1);
+                    }
                     section++;
                     continue;
                 }
 
                 if (buffer[i + 1] != 9)
                 {
-                    fprintf(stderr, "second char is not tab on line %d: %d", tfileLineNumber, (int)buffer[i + 1]);
+                    fprintf(stderr, "error: second char is not tab on line %d: %d\n", tfileLineNumber, (int)buffer[i + 1]);
                     exit(1);
                 }
 
@@ -238,7 +301,7 @@ static void Process()
                 }
                 else
                 {
-                    fprintf(stderr, "invalid deposit sign on line %d", tfileLineNumber);
+                    fprintf(stderr, "error: invalid deposit sign '%c' on line %d\n", buffer[i], tfileLineNumber);
                     exit(1);
                 }
             }
@@ -249,7 +312,7 @@ static void Process()
                 {
                     if (timestamp >= (long)1e11 || timestamp > curr_time)
                     {
-                        fprintf(stderr, "invalid timestamp line %d", tfileLineNumber);
+                        fprintf(stderr, "error: invalid timestamp which is greater than current time on line %d\n", tfileLineNumber);
                         exit(1);
                     }
                     node->timestamp = timestamp;
@@ -259,7 +322,7 @@ static void Process()
 
                 if (buffer[i] < '0' || buffer[i] > '9')
                 {
-                    fprintf(stderr, "Invalid timestamp character on line %d", tfileLineNumber);
+                    fprintf(stderr, "error: invalid timestamp character on line %d\n", tfileLineNumber);
                     exit(1);
                 }
                 timestamp = timestamp * 10 + (buffer[i] - '0');
@@ -269,7 +332,7 @@ static void Process()
                 // amount
                 if (amount_index == 0 && buffer[i] == '0' && buffer[i + 1] != '.')
                 {
-                    fprintf(stderr, "first char of amount_int is 0 on line %d", tfileLineNumber);
+                    fprintf(stderr, "error: first charactor of transaction amount is 0 on line %d\n", tfileLineNumber);
                     exit(1);
                 }
 
@@ -277,7 +340,7 @@ static void Process()
                 {
                     if (amount_cents >= (long)1e9)
                     {
-                        fprintf(stderr, "invalid transaction amount_int on line %d: %d", tfileLineNumber, amount_cents);
+                        fprintf(stderr, "error: transaction amount more than 10 millions on line %d: %d\n", tfileLineNumber, amount_cents);
                         exit(1);
                     }
                     node->amount_cents = amount_cents;
@@ -287,7 +350,7 @@ static void Process()
                 {
                     if (buffer[i + 3] != '\t')
                     {
-                        fprintf(stderr, "decimal number isn't 2 digit on line %d", tfileLineNumber);
+                        fprintf(stderr, "error: decimal number isn't 2 digits on line %d\n", tfileLineNumber);
                         exit(1);
                     }
                 }
@@ -298,7 +361,7 @@ static void Process()
                 }
                 else
                 {
-                    fprintf(stderr, "invalid amount_int on line %d, char is %c", tfileLineNumber, buffer[i]);
+                    fprintf(stderr, "error: invalid transaction amount on line %d, char is '%c'\n", tfileLineNumber, buffer[i]);
                     exit(1);
                 }
             }
@@ -309,6 +372,11 @@ static void Process()
                 {
                     strcpy(node->description, description);
                 }
+                else if (buffer[i] == '\t')
+                {
+                    fprintf(stderr, "error: Line %d: only 4 fields are allowed, found 5\n", tfileLineNumber);
+                    exit(1);
+                }
                 else if (buffer[i] != '\0')
                 {
                     if (description_index >= 24)
@@ -318,13 +386,18 @@ static void Process()
                     }
                     description[description_index++] = buffer[i];
                 }
+                else
+                {
+                    fprintf(stderr, "error: Line %d: char %d is %c which is invalid\n", tfileLineNumber, i, buffer[i]);
+                    exit(1);
+                }
             }
         }
 
         // not 3 tabs
         if (section != 3)
         {
-            fprintf(stderr, "line %d does not have 4 sections", tfileLineNumber);
+            fprintf(stderr, "line %d does not have 4 sections\n", tfileLineNumber);
             exit(1);
         }
 
@@ -439,9 +512,11 @@ static void Process()
 
 int main(int argc, char *argv[])
 {
-    SetProgramName(*argv);
-    ProcessOptions(argc, argv);
+    int fd;
 
-    Process();
+    SetProgramName(*argv);
+    ProcessOptions(argc, argv, &fd);
+
+    Process(fd);
     return 0;
 }
