@@ -42,18 +42,20 @@ static pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
 char buffer[BUFFER_SIZE];
 static struct timeval start_time;
+static struct timeval end_time;
 static My402List Q1, Q2;
 static int Q1_packet_count = 0; // the largest packet index Q1 received
+static struct timeval Q1_packet_time_sum = {0, 0};
 static int bucket = 0;
 static int packet_serviced_count = 0;
-static struct timeval packet_service_time_avg;
+static struct timeval packet_service_time_avg = {0, 0};
 static int stop_flag = 0;
 
 // statistic
 static int arrived_count = 0;
 static long long arrive_time_avg_milliseconds = 0;
 
-static struct timeval last_packet_arrival;
+static struct timeval last_packet_arrival = {0, 0};
 
 typedef struct Packet
 {
@@ -187,6 +189,7 @@ static void PrintParams()
         printf("\tP = %d\n", P);
     if (mode == 1)
         printf("\ttsfile = %s\n", buffer);
+    printf("\n");
 }
 
 static formatted_time CalTimeDiff(const struct timeval *former, const struct timeval *latter)
@@ -256,6 +259,59 @@ struct timeval CalTimeDiff_timeval(const struct timeval *former, const struct ti
     return diff;
 }
 
+struct timeval CalTimevalAdd(const struct timeval *a, const struct timeval *b)
+{
+    int64_t a_us = (int64_t)a->tv_sec * 1000000LL + a->tv_usec;
+    int64_t b_us = (int64_t)b->tv_sec * 1000000LL + b->tv_usec;
+    int64_t sum_us = a_us + b_us;
+
+    struct timeval result;
+    result.tv_sec = sum_us / 1000000LL;
+    result.tv_usec = sum_us % 1000000LL;
+
+    if (result.tv_usec < 0)
+    {
+        result.tv_usec += 1000000LL;
+        result.tv_sec -= 1;
+    }
+
+    return result;
+}
+
+struct timeval CalTimevalDevision_int(struct timeval t, int divisor)
+{
+    struct timeval result;
+    if (divisor == 0)
+    {
+        fprintf(stderr, "Error: Division by zero is not allowed.\n");
+        exit(1);
+    }
+
+    long total_usec = t.tv_sec * 1000000L + t.tv_usec;
+
+    long quotient = total_usec / divisor;
+
+    result.tv_sec = quotient / 1000000;
+    result.tv_usec = quotient % 1000000;
+
+    return result;
+}
+
+double CalTimevalDevision(struct timeval t1, struct timeval t2)
+{
+    /* Convert both timevals to seconds */
+    double seconds1 = t1.tv_sec + t1.tv_usec / 1000000.0;
+    double seconds2 = t2.tv_sec + t2.tv_usec / 1000000.0;
+
+    if (seconds2 == 0.0)
+    {
+        fprintf(stderr, "Error: Division by zero (denominator timeval is zero).\n");
+        exit(EXIT_FAILURE);
+    }
+
+    return seconds1 / seconds2;
+}
+
 static void log(const char *message)
 {
     formatted_time ft = CalElapsed(&start_time);
@@ -284,9 +340,6 @@ void Init()
 
     gettimeofday(&start_time, 0);
     setLastPacketTime(&start_time);
-
-    packet_service_time_avg.tv_sec = 0;
-    packet_service_time_avg.tv_usec = 0;
 }
 
 /* ----------------------- packet distributer ----------------------- */
@@ -302,6 +355,11 @@ void ResumePacketToQ2()
     snprintf(buffer, sizeof(buffer), "p%d leaves Q1, time in Q1 = %ld.%03ldms, token bucket now has %d token", first->index, ft_diff.milliseconds, ft_diff.microseconds, bucket);
     log(buffer);
 
+    // Statistics
+    struct timeval packet_Q1_time = CalTimeDiff_timeval(&first->Q1_arrival, &first->Q1_leave);
+    Q1_packet_time_sum = CalTimevalAdd(&Q1_packet_time_sum, &packet_Q1_time);
+
+    // append to Q2
     Q2.Append(&Q2, first);
     gettimeofday(&first->Q2_arrival, 0);
 
@@ -617,7 +675,12 @@ void DisplayStatistics()
 {
     printf("\nStatistics:\n\n");
     printf("\taverage packet inter-arrival time = %gs\n", (double)arrive_time_avg_milliseconds / 1000.0);
-    printf("\taverage packet service time = %ld.%ds\n", packet_service_time_avg.tv_sec, packet_service_time_avg.tv_usec);
+
+    printf("\taverage packet service time = %ld.%06ds\n", packet_service_time_avg.tv_sec, packet_service_time_avg.tv_usec);
+
+    struct timeval duration;
+    duration = CalTimeDiff_timeval(&start_time, &end_time);
+    printf("\n\taverage number of packets in Q1 = %.6g\n", CalTimevalDevision(Q1_packet_time_sum, duration));
 }
 
 void Process(int fd)
@@ -649,6 +712,8 @@ void Process(int fd)
     // clean up
     cleanQueue(&Q1, 1);
     cleanQueue(&Q2, 2);
+
+    gettimeofday(&end_time, 0);
 }
 
 /* ----------------------- main() ----------------------- */
