@@ -527,6 +527,8 @@ void ServicePacket(int server_index, Packet *serving_packet)
     // statistics
     pthread_mutex_lock(&m);
     packet_service_time_avg = CalAvgTime(packet_serviced_count, packet_service_time_avg, CalTimeDiff_timeval(&serving_packet->Server_arrival, &serving_packet->Server_leave));
+    packet_serviced_count++;
+    pthread_mutex_unlock(&m);
 
     free(serving_packet);
 
@@ -615,6 +617,7 @@ void DisplayStatistics()
 {
     printf("\nStatistics:\n\n");
     printf("\taverage packet inter-arrival time = %gs\n", (double)arrive_time_avg_milliseconds / 1000.0);
+    printf("\taverage packet service time = %ld.%ds\n", packet_service_time_avg.tv_sec, packet_service_time_avg.tv_usec);
 }
 
 void Process(int fd)
