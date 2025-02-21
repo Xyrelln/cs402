@@ -127,7 +127,7 @@ My402ListElem *My402ListFind(My402List *list, void *obj)
     My402ListElem *pFinder = list->anchor.next;
     while (pFinder != &list->anchor)
     {
-        if (pFinder->obj != obj)
+        if (pFinder->obj == obj)
             return pFinder;
         pFinder = pFinder->next;
     }
