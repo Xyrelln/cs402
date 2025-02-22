@@ -129,7 +129,7 @@ int SchedulePacket(int arrival_time, int packet_counter, Packet *packet)
         pthread_cond_wait(&cv, &m);
     }
 
-    snprintf(buffer, sizeof(buffer), "p%d arrives, needs %d tokens, inter-arrival time = %ld.%03dms", packet_counter + 1, packet->token_needed, inter_arrival_tv.tv_sec * 1000 + inter_arrival_tv.tv_usec / 1000, inter_arrival_tv.tv_usec % 1000);
+    snprintf(buffer, sizeof(buffer), "p%d arrives, needs %d tokens, inter-arrival time = %ld.%03ldms", packet_counter + 1, packet->token_needed, inter_arrival_tv.tv_sec * 1000 + inter_arrival_tv.tv_usec / 1000, inter_arrival_tv.tv_usec % 1000);
     logLine(buffer, &packet->initial_arrival);
 
     AppendPacketToQ1(packet);
@@ -420,7 +420,7 @@ void DisplayStatistics()
 {
     printf("\nStatistics:\n\n");
     printf("\taverage packet inter-arrival time = %g\n", (double)arrive_time_avg_milliseconds / 1000.0);
-    printf("\taverage packet service time = %ld.%06d\n", packet_service_time_avg.tv_sec, packet_service_time_avg.tv_usec);
+    printf("\taverage packet service time = %ld.%06ld\n", packet_service_time_avg.tv_sec, packet_service_time_avg.tv_usec);
 
     printf("\n");
     struct timeval duration = CalTimeDiff_timeval(&start_time, &end_time);
