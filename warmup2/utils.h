@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include <math.h>
 #include <stdint.h>
+#include <errno.h>
 
 #include "cs402.h"
 #include "my402list.h"

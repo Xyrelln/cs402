@@ -119,33 +119,24 @@ void ProcessOptions(int argc, char *argv[], int *fd)
             }
             char *filename = argv[++i];
             close(0);
-            if (access(filename, F_OK) == -1)
-            {
-                fprintf(stderr, "input file \"%s\" does not exist\n", filename);
-                exit(1);
-            }
-
-            if (access(filename, R_OK) == -1)
-            {
-                fprintf(stderr, "input file \"%s\" cannot be opened - access denied\n", filename);
-                exit(1);
-            }
-
-            struct stat file_stat;
-            if (stat(filename, &file_stat) == 0 && S_ISDIR(file_stat.st_mode))
-            {
-                fprintf(stderr, "input file \"%s\" is a directory or line 1 is not just a number\n", filename);
-                exit(1);
-            }
-            close(0);
-            if ((*fd = open(filename, O_RDONLY)) == -1)
-            {
-                perror(filename);
-                exit(1);
-            }
+            *fd = open(filename, O_RDONLY);
             if (*fd < 0)
             {
-                perror("Error opening trace file");
+                switch (errno)
+                {
+                case EISDIR:
+                    fprintf(stderr, "input file %s is a directory or line 1 is not just a number\n", filename);
+                    break;
+                case EACCES:
+                case EPERM:
+                    fprintf(stderr, "input file %s cannot be opened - access denied\n", filename);
+                    break;
+                case ENOENT:
+                    fprintf(stderr, "input file %s does not exist\n", filename);
+                    break;
+                default:
+                    perror("Error opening trace file");
+                }
                 exit(EXIT_FAILURE);
             }
             else if (*fd != 0)
@@ -153,8 +144,6 @@ void ProcessOptions(int argc, char *argv[], int *fd)
                 fprintf(stderr, "tsfile not opened as stdin\n");
                 exit(EXIT_FAILURE);
             }
-            *fd = open(filename, O_RDONLY);
-
             strcpy(buffer, filename);
             mode = 1;
 
