@@ -8,7 +8,7 @@ BACKUP_FNAME = warmup2-A-backup-`date +%d%b%Y-%H%M%S`.tar.gz
 BACKUP_DIR = $(HOME)/Shared-ubuntu
 
 warmup2: warmup2.o my402list.o utils.o
-	gcc -o warmup2 -g warmup2.o my402list.o utils.o -pthread
+	gcc -o warmup2 -g warmup2.o my402list.o utils.o -pthread -lm
 
 warmup2.o: warmup2.c my402list.h utils.h vals.h
 	gcc -g -c -Wall warmup2.c
