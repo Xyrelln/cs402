@@ -9,12 +9,12 @@ Replace "(Comments?)" below with the command the grader should use to compile
 your program (it should simply be "make" or "make warmup2"; minor variation is
 also fine).
 
-    To compile your code, the grader should type: (Comments?)
+    To compile your code, the grader should type: make
 
 If you have additional instruction for the grader, replace "(Comments?)" with your
 instruction (or with the word "none" if you don't have additional instructions):
 
-    Additional instructions for building/running this assignment: (Comments?)
+    Additional instructions for building/running this assignment: none
 
 In the above, it may be a good idea to tell the grader how many virtual CPUs to
 use when grading.  The only acceptable number of virtual CPUs are either 1 or 2.
@@ -61,7 +61,7 @@ Statistics output :
     3) number of packets in Q1 : -0 pts
     4) number of packets in Q2 : -0 pts
     5) number of packets at a server : -0 pts
-    6) time in system : -? pts
+    6) time in system : -0 pts
     7) standard deviation for time in system : -0 pts
     8) packet and token drop probabilities : -0 pts
 Output bad format : -0 pts
