@@ -11,6 +11,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <unistd.h>
+#include <math.h>
 
 #include "cs402.h"
 
@@ -45,11 +46,20 @@ static struct timeval start_time;
 static struct timeval end_time;
 static My402List Q1, Q2;
 static int Q1_packet_count = 0; // the largest packet index Q1 received
-static struct timeval Q1_packet_time_sum = {0, 0};
+static struct timeval Q1_packet_time_avg = {0, 0};
+static struct timeval Q2_packet_time_avg = {0, 0};
+static struct timeval S1_packet_time_avg = {0, 0};
+static struct timeval S2_packet_time_avg = {0, 0};
+static struct timeval time_in_system_avg = {0, 0};
+static double variance = 0.0;
 static int bucket = 0;
 static int packet_serviced_count = 0;
+static int packet_dropped = 0;
 static struct timeval packet_service_time_avg = {0, 0};
 static int stop_flag = 0;
+
+static int token_counter = 1; // actually this is amount + 1, bad naming but too lazy
+static int token_dropped = 0;
 
 // statistic
 static int arrived_count = 0;
@@ -219,21 +229,23 @@ static formatted_time CalElapsed(const struct timeval *original)
     return CalTimeDiff(original, &timestamp);
 }
 
-struct timeval CalAvgTime(int prev_count, struct timeval prev_avg, struct timeval new_timeval)
+struct timeval CalAvgTime(int prev_count, struct timeval *prev_avg, struct timeval *new_timeval)
 {
+    struct timeval result;
     if (prev_count == 0)
     {
-        return new_timeval;
+        result.tv_sec = new_timeval->tv_sec;
+        result.tv_usec = new_timeval->tv_usec;
+        return result;
     }
 
-    uint64_t total_prev = ((uint64_t)prev_avg.tv_sec * 1000000ULL + prev_avg.tv_usec) * prev_count;
-    uint64_t total_new = (uint64_t)new_timeval.tv_sec * 1000000ULL + new_timeval.tv_usec;
+    uint64_t total_prev = ((uint64_t)prev_avg->tv_sec * 1000000ULL + prev_avg->tv_usec) * prev_count;
+    uint64_t total_new = (uint64_t)new_timeval->tv_sec * 1000000ULL + new_timeval->tv_usec;
     uint64_t total_sum = total_prev + total_new;
     int new_count = prev_count + 1;
 
     uint64_t avg_us = total_sum / new_count;
 
-    struct timeval result;
     result.tv_sec = avg_us / 1000000ULL;
     result.tv_usec = avg_us % 1000000ULL;
 
@@ -278,7 +290,18 @@ struct timeval CalTimevalAdd(const struct timeval *a, const struct timeval *b)
     return result;
 }
 
-struct timeval CalTimevalDevision_int(struct timeval t, int divisor)
+struct timeval CalTimevalMult(struct timeval *t, double multiplier)
+{
+    struct timeval result;
+    double total_seconds = t->tv_sec + t->tv_usec / 1000000.0;
+    double new_total = total_seconds * multiplier;
+    result.tv_sec = (time_t)new_total;
+    result.tv_usec = (suseconds_t)((new_total - result.tv_sec) * 1000000);
+
+    return result;
+}
+
+struct timeval CalTimevalDevision_int(struct timeval *t, int divisor)
 {
     struct timeval result;
     if (divisor == 0)
@@ -287,7 +310,7 @@ struct timeval CalTimevalDevision_int(struct timeval t, int divisor)
         exit(1);
     }
 
-    long total_usec = t.tv_sec * 1000000L + t.tv_usec;
+    long total_usec = t->tv_sec * 1000000L + t->tv_usec;
 
     long quotient = total_usec / divisor;
 
@@ -297,22 +320,27 @@ struct timeval CalTimevalDevision_int(struct timeval t, int divisor)
     return result;
 }
 
-double CalTimevalDevision(struct timeval t1, struct timeval t2)
+double CalTimevalDevision(struct timeval *t1, struct timeval *t2)
 {
     /* Convert both timevals to seconds */
-    double seconds1 = t1.tv_sec + t1.tv_usec / 1000000.0;
-    double seconds2 = t2.tv_sec + t2.tv_usec / 1000000.0;
+    double seconds1 = t1->tv_sec + t1->tv_usec / 1000000.0;
+    double seconds2 = t2->tv_sec + t2->tv_usec / 1000000.0;
 
     if (seconds2 == 0.0)
     {
-        fprintf(stderr, "Error: Division by zero (denominator timeval is zero).\n");
+        fprintf(stderr, "Error: Division by zero\n");
         exit(EXIT_FAILURE);
     }
 
     return seconds1 / seconds2;
 }
 
-static void log(const char *message)
+double TimevalToDouble(struct timeval *t)
+{
+    return t->tv_sec + t->tv_usec / 1000000.0;
+}
+
+static void logLine(const char *message)
 {
     formatted_time ft = CalElapsed(&start_time);
     printf("%08ld.%03ldms: %s\n", ft.milliseconds, ft.microseconds, message);
@@ -353,11 +381,7 @@ void ResumePacketToQ2()
     // log leave Q1
     formatted_time ft_diff = CalTimeDiff(&first->Q1_arrival, &first->Q1_leave);
     snprintf(buffer, sizeof(buffer), "p%d leaves Q1, time in Q1 = %ld.%03ldms, token bucket now has %d token", first->index, ft_diff.milliseconds, ft_diff.microseconds, bucket);
-    log(buffer);
-
-    // Statistics
-    struct timeval packet_Q1_time = CalTimeDiff_timeval(&first->Q1_arrival, &first->Q1_leave);
-    Q1_packet_time_sum = CalTimevalAdd(&Q1_packet_time_sum, &packet_Q1_time);
+    logLine(buffer);
 
     // append to Q2
     Q2.Append(&Q2, first);
@@ -365,7 +389,7 @@ void ResumePacketToQ2()
 
     // log arrive at Q2
     snprintf(buffer, sizeof(buffer), "p%d enters Q2", first->index);
-    log(buffer);
+    logLine(buffer);
 }
 
 // must have access to box
@@ -375,7 +399,7 @@ void AppendPacketToQ1(Packet *packet)
     Q1_packet_count++;
 
     snprintf(buffer, sizeof(buffer), "p%d enters Q1", packet->index);
-    log(buffer);
+    logLine(buffer);
 
     gettimeofday(&packet->Q1_arrival, 0);
 
@@ -415,8 +439,9 @@ int SchedulePacket(int arrival_time, int packet_counter, Packet *packet)
     if (packet->token_needed > B)
     {
         formatted_time ft = CalElapsed(&last_packet_arrival);
+        packet_dropped++;
         snprintf(buffer, sizeof(buffer), "p%d arrives, needs %d tokens, inter-arrival time = %ld.%03ldms, dropped", packet->index, packet->token_needed, ft.milliseconds, ft.microseconds);
-        log(buffer);
+        logLine(buffer);
         gettimeofday(&packet->Q1_arrival, 0);
         setLastPacketTime(&packet->Q1_arrival);
 
@@ -437,7 +462,7 @@ int SchedulePacket(int arrival_time, int packet_counter, Packet *packet)
 
     formatted_time ft = CalElapsed(&last_packet_arrival);
     snprintf(buffer, sizeof(buffer), "p%d arrives, needs %d tokens, inter-arrival time = %ld.%03ldms", packet_counter, packet->token_needed, ft.milliseconds, ft.microseconds);
-    log(buffer);
+    logLine(buffer);
 
     AppendPacketToQ1(packet);
 
@@ -505,11 +530,10 @@ void *t_packet(void *arg) // total amount of packets, requires P tokens, packet 
 void *t_token(void *arg) // bucket cap, token rate
 {
     int interval_millisecond = min(round(1000.0 / r), 10000);
-    int token_counter = 1;
     while (1)
     {
         pthread_mutex_lock(&m);
-        if (stop_flag == 1)
+        if (stop_flag == 1 || (Q1.num_members == 0 && num <= arrived_count))
         {
             pthread_mutex_unlock(&m);
             return NULL;
@@ -519,7 +543,7 @@ void *t_token(void *arg) // bucket cap, token rate
         usleep(interval_millisecond * 1000);
 
         pthread_mutex_lock(&m);
-        if (stop_flag == 1)
+        if (stop_flag == 1 || (Q1.num_members == 0 && num <= arrived_count))
         {
             pthread_mutex_unlock(&m);
             return NULL;
@@ -530,12 +554,13 @@ void *t_token(void *arg) // bucket cap, token rate
         {
             bucket++;
             snprintf(buffer, sizeof(buffer), "token t%d arrives, token bucket now has %d %s", token_counter, bucket, bucket > 1 ? "tokens" : "token");
-            log(buffer);
+            logLine(buffer);
         }
         else
         {
+            token_dropped++;
             snprintf(buffer, sizeof(buffer), "token t%d arrives, dropped", token_counter);
-            log(buffer);
+            logLine(buffer);
         }
 
         token_counter++;
@@ -565,12 +590,23 @@ void TakeFirstPacketFromQ2(int server_index, Packet **p_serving_packet)
 
     // log leave Q2
     snprintf(buffer, sizeof(buffer), "p%d begins service at S%d, requesting %dms of service", serving_packet->index, server_index, serving_packet->service_time);
-    log(buffer);
+    logLine(buffer);
 
     gettimeofday(&serving_packet->Server_arrival, 0);
 }
 
-void ServicePacket(int server_index, Packet *serving_packet)
+void UpdateVariance(struct timeval *new_time, struct timeval *old_time_in_system_avg)
+{
+    double new_time_sec = TimevalToDouble(new_time);
+    double mean_sec = TimevalToDouble(old_time_in_system_avg);
+
+    double delta = new_time_sec - mean_sec;
+    double new_mean_sec = mean_sec + delta / (packet_serviced_count + 1);
+
+    variance += delta * (new_time_sec - new_mean_sec);
+}
+
+void ServicePacket(int server_index, Packet *serving_packet, int *packet_served)
 {
     usleep(serving_packet->service_time * 1000);
 
@@ -580,19 +616,42 @@ void ServicePacket(int server_index, Packet *serving_packet)
     const formatted_time ft_diff = CalTimeDiff(&serving_packet->Server_arrival, &serving_packet->Server_leave);
     const formatted_time ft_time_in_system = CalTimeDiff(&serving_packet->Q1_arrival, &serving_packet->Server_leave);
     snprintf(buffer, sizeof(buffer), "p%d departs from S%d, service time = %ld.%03ldms, time in system = %ld.%03ldms", serving_packet->index, server_index, ft_diff.milliseconds, ft_diff.microseconds, ft_time_in_system.milliseconds, ft_time_in_system.microseconds);
-    log(buffer);
+    logLine(buffer);
 
     // statistics
     pthread_mutex_lock(&m);
-    packet_service_time_avg = CalAvgTime(packet_serviced_count, packet_service_time_avg, CalTimeDiff_timeval(&serving_packet->Server_arrival, &serving_packet->Server_leave));
+    struct timeval tv = CalTimeDiff_timeval(&serving_packet->Server_arrival, &serving_packet->Server_leave);
+    packet_service_time_avg = CalAvgTime(packet_serviced_count, &packet_service_time_avg, &tv);
+
+    tv = CalTimeDiff_timeval(&serving_packet->Q1_arrival, &serving_packet->Q1_leave);
+    Q1_packet_time_avg = CalAvgTime(packet_serviced_count, &Q1_packet_time_avg, &tv);
+
+    tv = CalTimeDiff_timeval(&serving_packet->Q2_arrival, &serving_packet->Q2_leave);
+    Q2_packet_time_avg = CalAvgTime(packet_serviced_count, &Q2_packet_time_avg, &tv);
+
+    tv = CalTimeDiff_timeval(&serving_packet->Server_arrival, &serving_packet->Server_leave);
+    if (server_index == 1)
+    {
+        S1_packet_time_avg = CalAvgTime(*packet_served, &S1_packet_time_avg, &tv);
+    }
+    else
+    {
+        S2_packet_time_avg = CalAvgTime(*packet_served, &S2_packet_time_avg, &tv);
+    }
+
+    tv = CalTimeDiff_timeval(&serving_packet->Q1_arrival, &serving_packet->Server_leave);
+    struct timeval prev_time_in_system_avg = time_in_system_avg; // for variance
+    time_in_system_avg = CalAvgTime(packet_serviced_count, &Q2_packet_time_avg, &tv);
+    UpdateVariance(&tv, &prev_time_in_system_avg);
+
     packet_serviced_count++;
+    (*packet_served)++;
     pthread_mutex_unlock(&m);
 
     free(serving_packet);
 
     pthread_mutex_lock(&m);
-    packet_serviced_count++;
-    if (packet_serviced_count >= num)
+    if (packet_serviced_count + packet_dropped >= num)
     {
         kill(getpid(), SIGUSR1);
         pthread_cond_broadcast(&cv);
@@ -606,6 +665,7 @@ void *t_server(void *arg) // process rate
 {
     int server_index = *(int *)arg;
     Packet *serving_packet = 0;
+    int packet_served = 0;
 
     while (1)
     {
@@ -629,7 +689,7 @@ void *t_server(void *arg) // process rate
         TakeFirstPacketFromQ2(server_index, &serving_packet);
         pthread_mutex_unlock(&m);
 
-        ServicePacket(server_index, serving_packet);
+        ServicePacket(server_index, serving_packet, &packet_served);
     }
     return NULL;
 }
@@ -645,7 +705,7 @@ void *t_sig_handler(void *arg)
 
     if (sig == SIGINT)
     {
-        log("SIGINT caught");
+        logLine("SIGINT caught");
     }
 
     pthread_mutex_lock(&m);
@@ -667,7 +727,7 @@ void cleanQueue(My402List *Q, int idx)
         ele = Q->Next(Q, ele);
 
         snprintf(buffer, sizeof(buffer), "p%d removed from Q%d", p_idx, idx);
-        log(buffer);
+        logLine(buffer);
     }
 }
 
@@ -675,12 +735,22 @@ void DisplayStatistics()
 {
     printf("\nStatistics:\n\n");
     printf("\taverage packet inter-arrival time = %gs\n", (double)arrive_time_avg_milliseconds / 1000.0);
-
     printf("\taverage packet service time = %ld.%06ds\n", packet_service_time_avg.tv_sec, packet_service_time_avg.tv_usec);
 
-    struct timeval duration;
-    duration = CalTimeDiff_timeval(&start_time, &end_time);
-    printf("\n\taverage number of packets in Q1 = %.6g\n", CalTimevalDevision(Q1_packet_time_sum, duration));
+    printf("\n");
+    struct timeval duration = CalTimeDiff_timeval(&start_time, &end_time);
+    printf("\taverage number of packets in Q1 = %.6g\n", CalTimevalDevision(&Q1_packet_time_avg, &duration));
+    printf("\taverage number of packets in Q2 = %.6g\n", CalTimevalDevision(&Q2_packet_time_avg, &duration));
+    printf("\taverage number of packets at S1 = %.6g\n", CalTimevalDevision(&S1_packet_time_avg, &duration));
+    printf("\taverage number of packets at S2 = %.6g\n", CalTimevalDevision(&S2_packet_time_avg, &duration));
+
+    printf("\n");
+    printf("\taverage time a packet spent in system = %ld.%06ds\n", time_in_system_avg.tv_sec, time_in_system_avg.tv_usec);
+    printf("\tstandard deviation for time spent in system = %.6g\n", sqrt(variance));
+
+    printf("\n");
+    printf("\ttoken drop probability = %.6g\n", (double)token_dropped / (double)(token_counter - 1));
+    printf("\tpacket drop probability = %.6g\n", (double)packet_dropped / (double)(packet_serviced_count + packet_dropped));
 }
 
 void Process(int fd)
@@ -691,6 +761,8 @@ void Process(int fd)
     sigaddset(&set, SIGINT);
     sigaddset(&set, SIGUSR1);
     sigprocmask(SIG_BLOCK, &set, NULL);
+
+    logLine("emulation begins");
 
     pthread_t packet_thread, token_thread, s1_thread, s2_thread, sig_thread;
 
@@ -714,6 +786,8 @@ void Process(int fd)
     cleanQueue(&Q2, 2);
 
     gettimeofday(&end_time, 0);
+
+    logLine("emulation ends");
 }
 
 /* ----------------------- main() ----------------------- */
@@ -727,11 +801,8 @@ int main(int argc, char *argv[])
     Init();
 
     PrintParams();
-    log("emulation begins");
 
     Process(fd);
-
-    log("emulation ends");
 
     DisplayStatistics();
 
