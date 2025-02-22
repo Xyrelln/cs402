@@ -48,10 +48,13 @@ static My402List Q1, Q2;
 static int Q1_packet_count = 0; // the largest packet index Q1 received
 static struct timeval Q1_packet_time_avg = {0, 0};
 static struct timeval Q2_packet_time_avg = {0, 0};
+static int S1_packet_count = 0;
+static int S2_packet_count = 0;
 static struct timeval S1_packet_time_avg = {0, 0};
 static struct timeval S2_packet_time_avg = {0, 0};
 static struct timeval time_in_system_avg = {0, 0};
-static double variance = 0.0;
+static double X = 0.0;
+static double X2 = 0.0;
 static int bucket = 0;
 static int packet_serviced_count = 0;
 static int packet_dropped = 0;
@@ -425,11 +428,15 @@ int SchedulePacket(int arrival_time, int packet_counter, Packet *packet)
     if (packet->token_needed > B)
     {
         packet_dropped++;
-        snprintf(buffer, sizeof(buffer), "p%d arrives, needs %d tokens, inter-arrival time = %ld.%03ldms, dropped", packet->index + 1, packet->token_needed, CalTimevalMilliseconds(&inter_arrival_tv), CalTimevalMicroeconds(&inter_arrival_tv));
-        logLine(buffer, &packet->initial_arrival);
 
         pthread_mutex_lock(&m);
+        snprintf(buffer, sizeof(buffer), "p%d arrives, needs %d tokens, inter-arrival time = %ld.%03ldms, dropped", packet->index + 1, packet->token_needed, CalTimevalMilliseconds(&inter_arrival_tv), CalTimevalMicroeconds(&inter_arrival_tv));
+        logLine(buffer, &packet->initial_arrival);
         Q1_packet_count = packet_counter + 1;
+        if (packet_dropped + packet_serviced_count >= num)
+        {
+            kill(getpid(), SIGUSR1);
+        }
         pthread_cond_broadcast(&cv);
         pthread_mutex_unlock(&m);
 
@@ -527,7 +534,6 @@ void *t_token(void *arg) // bucket cap, token rate
             pthread_mutex_unlock(&m);
             return NULL;
         }
-        pthread_mutex_unlock(&m);
 
         struct timeval token_arrival_tv;
         gettimeofday(&token_arrival_tv, 0);
@@ -576,22 +582,29 @@ void TakeFirstPacketFromQ2(int server_index, Packet **p_serving_packet)
     logLine(buffer, &serving_packet->Q2_leave);
 }
 
-void UpdateVariance(struct timeval *new_time, struct timeval *old_time_in_system_avg)
+void UpdateVariance(struct timeval *new_time)
 {
-    double new_time_sec = TimevalToDouble(new_time);
-    double mean_sec = TimevalToDouble(old_time_in_system_avg);
-
-    double delta = new_time_sec - mean_sec;
-    double new_mean_sec = mean_sec + delta / (packet_serviced_count + 1);
-
-    variance += delta * (new_time_sec - new_mean_sec);
+    double new_sample = TimevalToDouble(new_time);
+    X = (double)packet_serviced_count / (double)(packet_serviced_count + 1) * X + new_sample / (double)(packet_serviced_count + 1);
+    X2 = (double)packet_serviced_count / (double)(packet_serviced_count + 1) * X2 + new_sample * new_sample / (double)(packet_serviced_count + 1);
 }
 
 void ServicePacket(int server_index, Packet *serving_packet, int *packet_served)
 {
     gettimeofday(&serving_packet->Server_arrival, 0);
+
+    pthread_mutex_lock(&m);
+    if (server_index == 1)
+    {
+        S1_packet_count++;
+    }
+    else
+    {
+        S2_packet_count++;
+    }
     snprintf(buffer, sizeof(buffer), "p%d begins service at S%d, requesting %dms of service", serving_packet->index + 1, server_index, serving_packet->service_time);
     logLine(buffer, &serving_packet->Server_arrival);
+    pthread_mutex_unlock(&m);
 
     usleep(serving_packet->service_time * 1000);
 
@@ -600,11 +613,13 @@ void ServicePacket(int server_index, Packet *serving_packet, int *packet_served)
     // log service
     struct timeval service_time_tv = CalTimeDiff_timeval(&serving_packet->Server_arrival, &serving_packet->Server_leave);
     struct timeval time_in_system_tv = CalTimeDiff_timeval(&serving_packet->initial_arrival, &serving_packet->Server_leave);
+
+    pthread_mutex_lock(&m);
+
     snprintf(buffer, sizeof(buffer), "p%d departs from S%d, service time = %ld.%03ldms, time in system = %ld.%03ldms", serving_packet->index + 1, server_index, CalTimevalMilliseconds(&service_time_tv), CalTimevalMicroeconds(&service_time_tv), CalTimevalMilliseconds(&time_in_system_tv), CalTimevalMicroeconds(&time_in_system_tv));
     logLine(buffer, &serving_packet->Server_leave);
 
     // statistics
-    pthread_mutex_lock(&m);
     struct timeval tv = CalTimeDiff_timeval(&serving_packet->Server_arrival, &serving_packet->Server_leave);
     packet_service_time_avg = CalAvgTime(packet_serviced_count, &packet_service_time_avg, &tv);
 
@@ -625,9 +640,8 @@ void ServicePacket(int server_index, Packet *serving_packet, int *packet_served)
     }
 
     tv = CalTimeDiff_timeval(&serving_packet->Q1_arrival, &serving_packet->Server_leave);
-    struct timeval prev_time_in_system_avg = time_in_system_avg; // for variance
-    time_in_system_avg = CalAvgTime(packet_serviced_count, &Q2_packet_time_avg, &tv);
-    UpdateVariance(&tv, &prev_time_in_system_avg);
+    time_in_system_avg = CalAvgTime(packet_serviced_count, &time_in_system_avg, &tv);
+    UpdateVariance(&tv);
 
     packet_serviced_count++;
     (*packet_served)++;
@@ -690,10 +704,11 @@ void *t_sig_handler(void *arg)
 
     if (sig == SIGINT)
     {
-        struct timeval now_tv;
-        gettimeofday(&now_tv, 0);
-        struct timeval sig_caught_tv = CalTimeDiff_timeval(&start_time, &now_tv);
+        struct timeval sig_caught_tv;
+        gettimeofday(&sig_caught_tv, 0);
+        pthread_mutex_lock(&m);
         logLine("SIGINT caught", &sig_caught_tv);
+        pthread_mutex_unlock(&m);
     }
 
     pthread_mutex_lock(&m);
@@ -708,7 +723,6 @@ void *t_sig_handler(void *arg)
 void cleanQueue(My402List *Q, int idx)
 {
     My402ListElem *ele = Q->First(Q);
-    struct timeval now_tv;
 
     while (ele != NULL)
     {
@@ -716,9 +730,9 @@ void cleanQueue(My402List *Q, int idx)
         free(ele->obj);
         ele = Q->Next(Q, ele);
 
-        gettimeofday(&now_tv, 0);
-        struct timeval unlink_tv = CalTimeDiff_timeval(&start_time, &now_tv);
-        snprintf(buffer, sizeof(buffer), "p%d removed from Q%d", p_idx, idx);
+        struct timeval unlink_tv;
+        gettimeofday(&unlink_tv, 0);
+        snprintf(buffer, sizeof(buffer), "p%d removed from Q%d", p_idx + 1, idx);
         logLine(buffer, &unlink_tv);
     }
 }
@@ -726,19 +740,19 @@ void cleanQueue(My402List *Q, int idx)
 void DisplayStatistics()
 {
     printf("\nStatistics:\n\n");
-    printf("\taverage packet inter-arrival time = %gs\n", (double)arrive_time_avg_milliseconds / 1000.0);
-    printf("\taverage packet service time = %ld.%06ds\n", packet_service_time_avg.tv_sec, packet_service_time_avg.tv_usec);
+    printf("\taverage packet inter-arrival time = %g\n", (double)arrive_time_avg_milliseconds / 1000.0);
+    printf("\taverage packet service time = %ld.%06d\n", packet_service_time_avg.tv_sec, packet_service_time_avg.tv_usec);
 
     printf("\n");
     struct timeval duration = CalTimeDiff_timeval(&start_time, &end_time);
-    printf("\taverage number of packets in Q1 = %.6g\n", CalTimevalDevision(&Q1_packet_time_avg, &duration));
-    printf("\taverage number of packets in Q2 = %.6g\n", CalTimevalDevision(&Q2_packet_time_avg, &duration));
-    printf("\taverage number of packets at S1 = %.6g\n", CalTimevalDevision(&S1_packet_time_avg, &duration));
-    printf("\taverage number of packets at S2 = %.6g\n", CalTimevalDevision(&S2_packet_time_avg, &duration));
+    printf("\taverage number of packets in Q1 = %.6g\n", packet_serviced_count * CalTimevalDevision(&Q1_packet_time_avg, &duration));
+    printf("\taverage number of packets in Q2 = %.6g\n", packet_serviced_count * CalTimevalDevision(&Q2_packet_time_avg, &duration));
+    printf("\taverage number of packets at S1 = %.6g\n", S1_packet_count * CalTimevalDevision(&S1_packet_time_avg, &duration));
+    printf("\taverage number of packets at S2 = %.6g\n", S2_packet_count * CalTimevalDevision(&S2_packet_time_avg, &duration));
 
     printf("\n");
-    printf("\taverage time a packet spent in system = %ld.%06ds\n", time_in_system_avg.tv_sec, time_in_system_avg.tv_usec);
-    printf("\tstandard deviation for time spent in system = %.6g\n", sqrt(variance));
+    printf("\taverage time a packet spent in system = %ld.%06d\n", time_in_system_avg.tv_sec, time_in_system_avg.tv_usec);
+    printf("\tstandard deviation for time spent in system = %.6g\n", sqrt(X2 - X * X));
 
     printf("\n");
     printf("\ttoken drop probability = %.6g\n", (double)token_dropped / (double)(token_counter - 1));
