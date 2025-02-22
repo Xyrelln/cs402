@@ -134,7 +134,7 @@ void ProcessOptions(int argc, char *argv[], int *fd)
             struct stat file_stat;
             if (stat(filename, &file_stat) == 0 && S_ISDIR(file_stat.st_mode))
             {
-                fprintf(stderr, "input file \"%s\" is a directory or input file is not in the right format\n", filename);
+                fprintf(stderr, "input file \"%s\" is a directory or line 1 is not just a number\n", filename);
                 exit(1);
             }
             close(0);
