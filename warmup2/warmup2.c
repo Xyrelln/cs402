@@ -430,7 +430,7 @@ void DisplayStatistics()
     printf("\taverage number of packets at S2 = %.6g\n", S2_packet_count * CalTimevalDevision(&S2_packet_time_avg, &duration));
 
     printf("\n");
-    printf("\taverage time a packet spent in system = %ld.%06d\n", time_in_system_avg.tv_sec, time_in_system_avg.tv_usec);
+    printf("\taverage time a packet spent in system = %ld.%06ld\n", time_in_system_avg.tv_sec, time_in_system_avg.tv_usec);
     printf("\tstandard deviation for time spent in system = %.6g\n", sqrt(X2 - X * X));
 
     printf("\n");
