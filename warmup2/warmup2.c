@@ -69,7 +69,7 @@ static struct timeval last_packet_arrival = {0, 0};
 
 typedef struct Packet
 {
-    struct timeval Q1_arrival, Q1_leave, Q2_arrival, Q2_leave, Server_arrival, Server_leave; // for statistics
+    struct timeval initial_arrival, Q1_arrival, Q1_leave, Q2_arrival, Q2_leave, Server_arrival, Server_leave; // for statistics
     int initial_arrival_delay;
     int token_needed;
     int service_time;
@@ -199,34 +199,16 @@ static void PrintParams()
         printf("\tP = %d\n", P);
     if (mode == 1)
         printf("\ttsfile = %s\n", buffer);
-    printf("\n");
 }
 
-static formatted_time CalTimeDiff(const struct timeval *former, const struct timeval *latter)
+static long CalTimevalMilliseconds(const struct timeval *tv)
 {
-    long elapsed_sec = latter->tv_sec - former->tv_sec;
-    long elapsed_usec = latter->tv_usec - former->tv_usec;
-
-    // negative microseconds
-    if (elapsed_usec < 0)
-    {
-        elapsed_sec -= 1;
-        elapsed_usec += 1000000;
-    }
-
-    formatted_time ft;
-    ft.milliseconds = elapsed_sec * 1000 + elapsed_usec / 1000;
-    ft.microseconds = elapsed_usec % 1000;
-
-    return ft;
+    return tv->tv_sec * 1000 + tv->tv_usec / 1000;
 }
 
-static formatted_time CalElapsed(const struct timeval *original)
+static long CalTimevalMicroeconds(const struct timeval *tv)
 {
-    struct timeval timestamp;
-    gettimeofday(&timestamp, 0);
-
-    return CalTimeDiff(original, &timestamp);
+    return tv->tv_usec % 1000;
 }
 
 struct timeval CalAvgTime(int prev_count, struct timeval *prev_avg, struct timeval *new_timeval)
@@ -340,10 +322,10 @@ double TimevalToDouble(struct timeval *t)
     return t->tv_sec + t->tv_usec / 1000000.0;
 }
 
-static void logLine(const char *message)
+static void logLine(const char *message, const struct timeval *tv)
 {
-    formatted_time ft = CalElapsed(&start_time);
-    printf("%08ld.%03ldms: %s\n", ft.milliseconds, ft.microseconds, message);
+    struct timeval time_since_start_tv = CalTimeDiff_timeval(&start_time, tv);
+    printf("%08ld.%03ldms: %s\n", CalTimevalMilliseconds(&time_since_start_tv), CalTimevalMicroeconds(&time_since_start_tv), message);
 }
 
 static void setLastPacketTime(const struct timeval *timeval)
@@ -379,17 +361,17 @@ void ResumePacketToQ2()
     gettimeofday(&first->Q1_leave, 0);
 
     // log leave Q1
-    formatted_time ft_diff = CalTimeDiff(&first->Q1_arrival, &first->Q1_leave);
-    snprintf(buffer, sizeof(buffer), "p%d leaves Q1, time in Q1 = %ld.%03ldms, token bucket now has %d token", first->index, ft_diff.milliseconds, ft_diff.microseconds, bucket);
-    logLine(buffer);
+    struct timeval tv = CalTimeDiff_timeval(&first->Q1_arrival, &first->Q1_leave);
+    snprintf(buffer, sizeof(buffer), "p%d leaves Q1, time in Q1 = %ld.%03ldms, token bucket now has %d token", first->index + 1, CalTimevalMilliseconds(&tv), CalTimevalMicroeconds(&tv), bucket);
+    logLine(buffer, &first->Q1_leave);
 
     // append to Q2
     Q2.Append(&Q2, first);
     gettimeofday(&first->Q2_arrival, 0);
 
     // log arrive at Q2
-    snprintf(buffer, sizeof(buffer), "p%d enters Q2", first->index);
-    logLine(buffer);
+    snprintf(buffer, sizeof(buffer), "p%d enters Q2", first->index + 1);
+    logLine(buffer, &first->Q2_arrival);
 }
 
 // must have access to box
@@ -398,10 +380,10 @@ void AppendPacketToQ1(Packet *packet)
     Q1.Append(&Q1, packet);
     Q1_packet_count++;
 
-    snprintf(buffer, sizeof(buffer), "p%d enters Q1", packet->index);
-    logLine(buffer);
-
     gettimeofday(&packet->Q1_arrival, 0);
+
+    snprintf(buffer, sizeof(buffer), "p%d enters Q1", packet->index + 1);
+    logLine(buffer, &packet->Q1_arrival);
 
     if (Q1.num_members == 1) // he's the only guy
     {
@@ -436,14 +418,15 @@ int SchedulePacket(int arrival_time, int packet_counter, Packet *packet)
         return 2;
     }
 
+    gettimeofday(&packet->initial_arrival, 0);
+    struct timeval inter_arrival_tv = CalTimeDiff_timeval(&last_packet_arrival, &packet->initial_arrival);
+    setLastPacketTime(&packet->initial_arrival);
+
     if (packet->token_needed > B)
     {
-        formatted_time ft = CalElapsed(&last_packet_arrival);
         packet_dropped++;
-        snprintf(buffer, sizeof(buffer), "p%d arrives, needs %d tokens, inter-arrival time = %ld.%03ldms, dropped", packet->index, packet->token_needed, ft.milliseconds, ft.microseconds);
-        logLine(buffer);
-        gettimeofday(&packet->Q1_arrival, 0);
-        setLastPacketTime(&packet->Q1_arrival);
+        snprintf(buffer, sizeof(buffer), "p%d arrives, needs %d tokens, inter-arrival time = %ld.%03ldms, dropped", packet->index + 1, packet->token_needed, CalTimevalMilliseconds(&inter_arrival_tv), CalTimevalMicroeconds(&inter_arrival_tv));
+        logLine(buffer, &packet->initial_arrival);
 
         pthread_mutex_lock(&m);
         Q1_packet_count = packet_counter + 1;
@@ -460,14 +443,10 @@ int SchedulePacket(int arrival_time, int packet_counter, Packet *packet)
         pthread_cond_wait(&cv, &m);
     }
 
-    formatted_time ft = CalElapsed(&last_packet_arrival);
-    snprintf(buffer, sizeof(buffer), "p%d arrives, needs %d tokens, inter-arrival time = %ld.%03ldms", packet_counter, packet->token_needed, ft.milliseconds, ft.microseconds);
-    logLine(buffer);
+    snprintf(buffer, sizeof(buffer), "p%d arrives, needs %d tokens, inter-arrival time = %ld.%03dms", packet_counter + 1, packet->token_needed, inter_arrival_tv.tv_sec * 1000 + inter_arrival_tv.tv_usec / 1000, inter_arrival_tv.tv_usec % 1000);
+    logLine(buffer, &packet->initial_arrival);
 
     AppendPacketToQ1(packet);
-
-    gettimeofday(&packet->Q1_arrival, 0);
-    setLastPacketTime(&packet->Q1_arrival);
 
     pthread_cond_broadcast(&cv);
     pthread_mutex_unlock(&m);
@@ -550,17 +529,20 @@ void *t_token(void *arg) // bucket cap, token rate
         }
         pthread_mutex_unlock(&m);
 
+        struct timeval token_arrival_tv;
+        gettimeofday(&token_arrival_tv, 0);
+
         if (bucket < B)
         {
             bucket++;
             snprintf(buffer, sizeof(buffer), "token t%d arrives, token bucket now has %d %s", token_counter, bucket, bucket > 1 ? "tokens" : "token");
-            logLine(buffer);
+            logLine(buffer, &token_arrival_tv);
         }
         else
         {
             token_dropped++;
             snprintf(buffer, sizeof(buffer), "token t%d arrives, dropped", token_counter);
-            logLine(buffer);
+            logLine(buffer, &token_arrival_tv);
         }
 
         token_counter++;
@@ -589,10 +571,9 @@ void TakeFirstPacketFromQ2(int server_index, Packet **p_serving_packet)
     gettimeofday(&serving_packet->Q2_leave, 0);
 
     // log leave Q2
-    snprintf(buffer, sizeof(buffer), "p%d begins service at S%d, requesting %dms of service", serving_packet->index, server_index, serving_packet->service_time);
-    logLine(buffer);
-
-    gettimeofday(&serving_packet->Server_arrival, 0);
+    struct timeval Q2_duration_tv = CalTimeDiff_timeval(&serving_packet->Q2_arrival, &serving_packet->Q2_leave);
+    snprintf(buffer, sizeof(buffer), "p%d leaves Q2, time in Q2 = %ld.%03ldms", serving_packet->index + 1, CalTimevalMilliseconds(&Q2_duration_tv), CalTimevalMicroeconds(&Q2_duration_tv));
+    logLine(buffer, &serving_packet->Q2_leave);
 }
 
 void UpdateVariance(struct timeval *new_time, struct timeval *old_time_in_system_avg)
@@ -608,15 +589,19 @@ void UpdateVariance(struct timeval *new_time, struct timeval *old_time_in_system
 
 void ServicePacket(int server_index, Packet *serving_packet, int *packet_served)
 {
+    gettimeofday(&serving_packet->Server_arrival, 0);
+    snprintf(buffer, sizeof(buffer), "p%d begins service at S%d, requesting %dms of service", serving_packet->index + 1, server_index, serving_packet->service_time);
+    logLine(buffer, &serving_packet->Server_arrival);
+
     usleep(serving_packet->service_time * 1000);
 
     gettimeofday(&serving_packet->Server_leave, 0);
 
     // log service
-    const formatted_time ft_diff = CalTimeDiff(&serving_packet->Server_arrival, &serving_packet->Server_leave);
-    const formatted_time ft_time_in_system = CalTimeDiff(&serving_packet->Q1_arrival, &serving_packet->Server_leave);
-    snprintf(buffer, sizeof(buffer), "p%d departs from S%d, service time = %ld.%03ldms, time in system = %ld.%03ldms", serving_packet->index, server_index, ft_diff.milliseconds, ft_diff.microseconds, ft_time_in_system.milliseconds, ft_time_in_system.microseconds);
-    logLine(buffer);
+    struct timeval service_time_tv = CalTimeDiff_timeval(&serving_packet->Server_arrival, &serving_packet->Server_leave);
+    struct timeval time_in_system_tv = CalTimeDiff_timeval(&serving_packet->initial_arrival, &serving_packet->Server_leave);
+    snprintf(buffer, sizeof(buffer), "p%d departs from S%d, service time = %ld.%03ldms, time in system = %ld.%03ldms", serving_packet->index + 1, server_index, CalTimevalMilliseconds(&service_time_tv), CalTimevalMicroeconds(&service_time_tv), CalTimevalMilliseconds(&time_in_system_tv), CalTimevalMicroeconds(&time_in_system_tv));
+    logLine(buffer, &serving_packet->Server_leave);
 
     // statistics
     pthread_mutex_lock(&m);
@@ -705,7 +690,10 @@ void *t_sig_handler(void *arg)
 
     if (sig == SIGINT)
     {
-        logLine("SIGINT caught");
+        struct timeval now_tv;
+        gettimeofday(&now_tv, 0);
+        struct timeval sig_caught_tv = CalTimeDiff_timeval(&start_time, &now_tv);
+        logLine("SIGINT caught", &sig_caught_tv);
     }
 
     pthread_mutex_lock(&m);
@@ -720,14 +708,18 @@ void *t_sig_handler(void *arg)
 void cleanQueue(My402List *Q, int idx)
 {
     My402ListElem *ele = Q->First(Q);
+    struct timeval now_tv;
+
     while (ele != NULL)
     {
         int p_idx = ((Packet *)(ele->obj))->index;
         free(ele->obj);
         ele = Q->Next(Q, ele);
 
+        gettimeofday(&now_tv, 0);
+        struct timeval unlink_tv = CalTimeDiff_timeval(&start_time, &now_tv);
         snprintf(buffer, sizeof(buffer), "p%d removed from Q%d", p_idx, idx);
-        logLine(buffer);
+        logLine(buffer, &unlink_tv);
     }
 }
 
@@ -762,7 +754,7 @@ void Process(int fd)
     sigaddset(&set, SIGUSR1);
     sigprocmask(SIG_BLOCK, &set, NULL);
 
-    logLine("emulation begins");
+    logLine("emulation begins", &start_time);
 
     pthread_t packet_thread, token_thread, s1_thread, s2_thread, sig_thread;
 
@@ -787,7 +779,7 @@ void Process(int fd)
 
     gettimeofday(&end_time, 0);
 
-    logLine("emulation ends");
+    logLine("emulation ends", &end_time);
 }
 
 /* ----------------------- main() ----------------------- */
