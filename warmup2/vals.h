@@ -50,7 +50,7 @@ extern int token_dropped;
 
 // statistic
 extern int arrived_count;
-extern long long arrive_time_avg_milliseconds;
+extern struct timeval arrive_time_avg;
 
 extern struct timeval last_packet_arrival;
 

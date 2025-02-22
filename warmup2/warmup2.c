@@ -89,10 +89,6 @@ int SchedulePacket(int arrival_time, int packet_counter, Packet *packet)
 
     usleep(arrival_time * 1000); // sleep for arrival_time milliseconds
 
-    // add arrival time sum
-    arrive_time_avg_milliseconds = arrive_time_avg_milliseconds * ((double)arrived_count / (double)(arrived_count + 1)) + ((double)arrival_time / (double)(arrived_count + 1));
-    arrived_count += 1;
-
     // also check after wake up
     if (stop_flag == 1)
     {
@@ -102,6 +98,8 @@ int SchedulePacket(int arrival_time, int packet_counter, Packet *packet)
 
     gettimeofday(&packet->initial_arrival, 0);
     struct timeval inter_arrival_tv = CalTimeDiff_timeval(&last_packet_arrival, &packet->initial_arrival);
+    arrive_time_avg = CalAvgTime(arrived_count, &arrive_time_avg, &inter_arrival_tv);
+    arrived_count += 1;
     setLastPacketTime(&packet->initial_arrival);
 
     if (packet->token_needed > B)
@@ -419,7 +417,7 @@ void cleanQueue(My402List *Q, int idx)
 void DisplayStatistics()
 {
     printf("\nStatistics:\n\n");
-    printf("\taverage packet inter-arrival time = %g\n", (double)arrive_time_avg_milliseconds / 1000.0);
+    printf("\taverage packet inter-arrival time = %.6g\n", TimevalToDouble(&arrive_time_avg));
     printf("\taverage packet service time = %ld.%06ld\n", packet_service_time_avg.tv_sec, packet_service_time_avg.tv_usec);
 
     printf("\n");

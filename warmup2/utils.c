@@ -40,7 +40,7 @@ int token_dropped = 0;
 
 // statistic
 int arrived_count = 0;
-long long arrive_time_avg_milliseconds = 0;
+struct timeval arrive_time_avg = {0, 0};
 
 struct timeval last_packet_arrival = {0, 0};
 
@@ -58,46 +58,91 @@ void ProcessOptions(int argc, char *argv[], int *fd)
     {
         if (strcmp(argv[i], "-n") == 0)
         {
-            if (i + 1 >= argc)
-                Usage();
+            if (i + 1 >= argc || argv[i + 1][0] == '-')
+            {
+                fprintf(stderr, "malformed command, value for \"-n\" is not given\n");
+                exit(EXIT_FAILURE);
+            }
             num = atoi(argv[++i]);
         }
         else if (strcmp(argv[i], "-lambda") == 0)
         {
-            if (i + 1 >= argc)
-                Usage();
+            if (i + 1 >= argc || argv[i + 1][0] == '-')
+            {
+                fprintf(stderr, "malformed command, value for \"-lambda\" is not given\n");
+                exit(EXIT_FAILURE);
+            }
             lambda = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "-mu") == 0)
         {
-            if (i + 1 >= argc)
-                Usage();
+            if (i + 1 >= argc || argv[i + 1][0] == '-')
+            {
+                fprintf(stderr, "malformed command, value for \"-mu\" is not given\n");
+                exit(EXIT_FAILURE);
+            }
             mu = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "-r") == 0)
         {
-            if (i + 1 >= argc)
-                Usage();
+            if (i + 1 >= argc || argv[i + 1][0] == '-')
+            {
+                fprintf(stderr, "malformed command, value for \"-r\" is not given\n");
+                exit(EXIT_FAILURE);
+            }
             r = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "-B") == 0)
         {
-            if (i + 1 >= argc)
-                Usage();
+            if (i + 1 >= argc || argv[i + 1][0] == '-')
+            {
+                fprintf(stderr, "malformed command, value for \"-B\" is not given\n");
+                exit(EXIT_FAILURE);
+            }
             B = atoi(argv[++i]);
         }
         else if (strcmp(argv[i], "-P") == 0)
         {
-            if (i + 1 >= argc)
-                Usage();
+            if (i + 1 >= argc || argv[i + 1][0] == '-')
+            {
+                fprintf(stderr, "malformed command, value for \"-P\" is not given\n");
+                exit(EXIT_FAILURE);
+            }
             P = atoi(argv[++i]);
         }
         else if (strcmp(argv[i], "-t") == 0)
         {
-            if (i + 1 >= argc)
-                Usage();
+            if (i + 1 >= argc || argv[i + 1][0] == '-')
+            {
+                fprintf(stderr, "malformed command, value for \"-t\" is not given\n");
+                exit(EXIT_FAILURE);
+            }
+            char *filename = argv[++i];
             close(0);
-            *fd = open(argv[++i], O_RDONLY);
+            if (access(filename, F_OK) == -1)
+            {
+                fprintf(stderr, "input file \"%s\" does not exist\n", filename);
+                exit(1);
+            }
+
+            if (access(filename, R_OK) == -1)
+            {
+                fprintf(stderr, "input file \"%s\" cannot be opened - access denied\n", filename);
+                exit(1);
+            }
+
+            struct stat file_stat;
+            if (stat(filename, &file_stat) == 0 && S_ISDIR(file_stat.st_mode))
+            {
+                fprintf(stderr, "input file \"%s\" is a directory or input file is not in the right format\n", filename);
+                exit(1);
+            }
+            close(0);
+            if ((*fd = open(filename, O_RDONLY)) == -1)
+            {
+                perror(filename);
+                exit(1);
+            }
             if (*fd < 0)
             {
                 perror("Error opening trace file");
@@ -105,37 +150,44 @@ void ProcessOptions(int argc, char *argv[], int *fd)
             }
             else if (*fd != 0)
             {
-                perror("tsfile not opened as stdin");
+                fprintf(stderr, "tsfile not opened as stdin\n");
+                exit(EXIT_FAILURE);
             }
-            strcpy(buffer, argv[i]);
-            mode = 1; // set mode to trace-driven when -t is used
+            *fd = open(filename, O_RDONLY);
 
-            // when using tsfile, read the first line for num of packets
-            // read how many packets
+            strcpy(buffer, filename);
+            mode = 1;
+
             if (fgets(buffer, BUFFER_SIZE, stdin) != NULL)
             {
                 if (strlen(buffer) > MAX_VALID_LINE_CHAR)
                 {
                     fprintf(stderr, "error: line 1 has more than %d chars\n", MAX_VALID_LINE_CHAR);
-                    exit(1);
+                    exit(EXIT_FAILURE);
                 }
-                num = atoi(buffer);
+                buffer[strcspn(buffer, "\n")] = '\0';
+                char *endptr;
+                num = strtol(buffer, &endptr, 10);
+                if (endptr == buffer || *endptr != '\0')
+                {
+                    fprintf(stderr, "malformed input - line 1 is not just a number\n");
+                    exit(EXIT_FAILURE);
+                }
                 lineNum++;
             }
             else
             {
-                perror("tsfile empty\n");
-                exit(1);
+                fprintf(stderr, "tsfile empty\n");
+                exit(EXIT_FAILURE);
             }
         }
         else
         {
-            fprintf(stderr, "Unknown option: %s\n", argv[i]);
-            Usage();
+            fprintf(stderr, "malformed command, \"%s\" is not a valid commandline option\n", argv[i]);
+            exit(EXIT_FAILURE);
         }
     }
 }
-
 void SetProgramName(const char *s)
 {
     char *c_ptr = strrchr(s, DIR_SEP);

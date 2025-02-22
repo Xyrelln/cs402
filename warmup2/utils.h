@@ -23,6 +23,7 @@
 #include "vals.h"
 
 void Usage(void);
+int isValidFileName(const char *filename);
 void ProcessOptions(int argc, char *argv[], int *fd);
 void SetProgramName(const char *s);
 void PrintParams(void);
