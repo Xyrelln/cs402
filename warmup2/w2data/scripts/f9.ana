@@ -1,0 +1,28 @@
+
+==== Packets ====
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+==== Statistics ====
+average packet inter-arrival time = 0.0270089333333334
+average packet service time = (N/A, no packet served)
+average number of packets in Q1 = 0
+average number of packets in Q2 = 0
+average number of packets in S1 = 0
+average number of packets in S2 = 0
+average time a packet spent in system = (N/A, no packet served)
+standard deviation for time spent in system = (N/A, no packet served)
+token drop probability = 0
+packet drop probability = 0

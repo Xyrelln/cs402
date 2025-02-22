@@ -1,22 +1,3 @@
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <sys/time.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <time.h>
-#include <ctype.h>
-#include <pthread.h>
-#include <signal.h>
-#include <unistd.h>
-#include <math.h>
-
-#include "cs402.h"
-#include "my402list.h"
-
-#include "vals.h"
 #include "utils.h"
 
 char gszProgName[MAXPATHLENGTH];
